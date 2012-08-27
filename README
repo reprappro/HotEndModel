@@ -1,0 +1,41 @@
+This is a simple Java program to model the behaviour of a RepRap hot end (or 
+anything else that gets heated) to allow the parameters of a PID for controlling
+it to be set.
+
+The Hot End is modelled as follows:
+
+  dT/dt = a*p + b*(T - T0)    ----- (1)
+  
+  t is time in seconds
+  T is temperature in C
+  p is the dimensionless input power.
+  T0 is room temperature
+  a and b are parameters that get set experimentally (see below).
+  
+For constant p, ODE (1) has the solution:
+ 
+  T = T0 + a*p*[1 - e^(b(tLag - t))]/b  -----(2)
+  
+where tLag is the time between applying power and any change in temperature occurring.
+  
+p is changed to a PWM value in [0, range] internally.  
+
+Generally, the unknown values are a, b and tLag.
+
+So the procedure is to fix a value of p, run the hot end up from
+cold using it, and record the temperatures every dt seconds into
+a data file.
+
+This program then reads that data file (the first temperature in which is taken to be T0)
+and compares it with Equation (2).  Arbitrary, but sensible, values of a, b and tLag are set
+for the initial comparison.  The program works out a residual sum of squares for the errors, 
+then iterates to find the values of a, b and tLag that minimise that RSS.  The iteration 
+computes numerical values for the partial derivatives of the RSS with respect to a, b and tLag
+then uses a downhill pathfinder to get to a minimum RSS.
+
+author Adrian Bowyer
+RepRapPro Ltd
+http://reprappro.com
+
+Licence: GPL
+
