@@ -59,52 +59,48 @@ public class HotEndModel
 {
 
 	
-	double dt = 0.4;        // Time increment for Euler integration
+	double dt = 0.4;        // Time increment for Euler integration and experiment
 	double endTime = 240;   // How long to run the simulation (secs)
 	double T0 = 25;         // Room temperature
 	double gradEst = 0.01;  // Used in numerical estimation of derivatives
+	double pTest = 0.4;		// Power used in the experimental test
+	double range = 255;		// Actual power values to multiply p by
+	
+	// Hot end parameters
+	
+	static final int a = 0;
+	static final int b = 1;
+	static final int lag = 2;
+	double aDefault = 0.05;      // Hot end parameter - see above
+	double bDefault = 0.02;      // Hot end parameter - see above
+	double lagDefault = 5;       // Time lag between power change and effect (secs)	
 	
 	// PID variables
 	
+	static final int Kp = 0;
+	static final int Ki = 1;
+	static final int Kd = 2;
+	static final int clamp = 3;
 	double e = 0;
 	double eLast = 0;
 	double eIntegral = 0;
-	double pTest = 0.4;
-	double Kp = 0.001;
-	double Ki = 0.0014;	
-	double Kd = 0;
-	double clamp = 50;
 	double target = 205;
-	double range = 255;
-	
-	String dataFile = "t04";
+	double heatingTime = 40;
+	double KpDefault = 0.0015;
+	double KiDefault = 0.005;	
+	double KdDefault = 0.02;
+	double clampDefault = 70;		
+
+	String experimentalData = "t04";
 	
 	double experiment[];
+	double ideal[];
 	
-	class Parameters
-	{
-		// Initial guess values
-		
-		double a = 0.05;      // Hot end parameter - see above
-		double b = 0.02;      // Hot end parameter - see above
-		double lag = 5;       // Time lag between power change and effect (secs)
-		
-		Parameters() {}
-		
-		Parameters(double aa, double bb, double ll)
-		{
-			a = aa;
-			b = bb;
-			lag = ll;
-		}
-		
-		public String toString()
-		{
-			String r = "a: " + a + ", b: " + b + ", lag: " + lag;
-			return r;
-		}
-	}
-	
+	/**
+	 * Ring buffer to hold power values to achieve time lag
+	 * @author ensab
+	 *
+	 */
 	class Ring
 	{
 		int l;
@@ -112,9 +108,9 @@ public class HotEndModel
 		int in;
 		int out;
 		
-		Ring(double v, Parameters parm)
+		Ring(double v, double lagTime)
 		{
-			l = (int) (1 + parm.lag/dt);
+			l = (int) (1 + lagTime/dt);
 			buffer = new double[l];
 			in = 0;
 			out = l;
@@ -139,14 +135,15 @@ public class HotEndModel
 	public HotEndModel()
 	{
 		experiment = new double[5 + (int)(endTime/dt)];
+		ideal = new double[5 + (int)(endTime/dt)];
 		int i = 0;
 		try 
 		{
-		    BufferedReader in = new BufferedReader(new FileReader(dataFile));
+		    BufferedReader in = new BufferedReader(new FileReader(experimentalData));
 		    String str;
 		    while ((str = in.readLine()) != null)
 		    {
-		    	if(!str.isEmpty())
+		    	if(!str.isEmpty()) // Data files sometimes have extra newlines
 		    	{
 		    		experiment[i] = Double.parseDouble(str);
 		    		i++;
@@ -159,13 +156,34 @@ public class HotEndModel
 		}
 		T0 = experiment[0];
 	}
+
+	/**
+	 * Set up the ideal heating profile
+	 * @param pr
+	 */
+	public void setIdeal()
+	{
+		double t = 0;
+		int i = 0;
+		while(t < endTime)
+		{
+			if(t < heatingTime)
+			{
+				ideal[i] = T0 + (target - T0)*t/heatingTime;
+			} else
+				ideal[i] = target;
+			i++;
+			t += dt;
+		}
+	}
 	
-    public void buildChart(XYSeries dataA, XYSeries dataB, XYSeries dataC) throws Exception 
+    public void buildChart(XYSeries dataA, XYSeries dataB, XYSeries dataC, XYSeries dataD) throws Exception 
     {  
        XYSeriesCollection dataset = new XYSeriesCollection();
        if(dataA != null) dataset.addSeries( dataA );  
        if(dataB != null) dataset.addSeries( dataB );
        if(dataC != null) dataset.addSeries( dataC );
+       if(dataD != null) dataset.addSeries( dataD );
        JFreeChart chart = ChartFactory.createXYLineChart( "Hot-end graph",  
                                                           "Time (secs)",  
                                                           "Temp (C)",  
@@ -182,6 +200,7 @@ public class HotEndModel
        renderer.setSeriesPaint(0, Color.red);
        renderer.setSeriesPaint(1, Color.blue);
        renderer.setSeriesPaint(2, Color.yellow);
+       renderer.setSeriesPaint(3, Color.black);
        plot.setRenderer(renderer); 
        
        ChartFrame chartFrame = new ChartFrame("XYArea Chart", chart);
@@ -194,13 +213,13 @@ public class HotEndModel
      * TODO: Change to Runge-Kutta?
      * @param T
      * @param p
-     * @param parm
+     * @param hotEnd
      * @param r
      * @return
      */
-	public double nextT(double T, double p, Parameters parm, Ring r)
+	public double nextT(double T, double p, double[] hotEnd, Ring r)
 	{
-		double result = T + (parm.a*r.get()*range - parm.b*(T-T0))*dt;
+		double result = T + ( hotEnd[a]*r.get()*range - hotEnd[b]*(T-T0) )*dt;
 		r.add(p);
 		return result;
 	}
@@ -223,34 +242,58 @@ public class HotEndModel
 	/**
 	 * Return the power demanded by the PID
 	 */
-	public double PID(double T)
+	public double PID(double T, double[] pid)
 	{
 		eLast = e;
 		e = target - T;
-		double result = Kp*e + Ki*eIntegral + Kd*(e - eLast)/dt;
+		double result = pid[Kp]*e + pid[Ki]*eIntegral + pid[Kd]*(e - eLast)/dt;
 		eIntegral += e*dt;
-		if(eIntegral < -clamp) eIntegral = -clamp;
-		if(eIntegral > clamp) eIntegral = clamp;
+		if(eIntegral < -pid[clamp]) eIntegral = -pid[clamp];
+		if(eIntegral > pid[clamp]) eIntegral = pid[clamp];
+		if(result < 0) result = 0;
+		if(result > 1) result = 1;
+		return result;
+	}
+	
+	/**
+	 * Calculate the PID response
+	 * @param pid
+	 * @return
+	 */
+	public double[] pidPredict(double[] pid, double[] hotEnd)
+	{
+		double result[] = new double[experiment.length];
+		double t = 0;
+		double T = T0;
+		int i = 0;
+		Ring r = new Ring(0, hotEnd[lag]);
+		while(t < endTime)
+		{
+			result[i] = T;
+			double p = PID(T, pid);
+			T = nextT(T, p, hotEnd, r);
+			t += dt;
+			i++;
+		}
 		return result;
 	}
 	
 	/**
 	 * Plot curve for the PID response
-	 * @param parm
+	 * @param pid
 	 * @return
 	 */
-	public XYSeries PIDPower(Parameters parm)
+	public XYSeries PIDPower(double[] pid, double[] hotEnd)
 	{
-		XYSeries result = new XYSeries( "PID power");
+		XYSeries result = new XYSeries("PID");
+		double r[] = pidPredict(pid, hotEnd);
+		int i = 0;
 		double t = 0;
-		double T = T0;
-		Ring r = new Ring(0, parm);
 		while(t < endTime)
 		{
-			result.add(t, T);
-			double p = PID(T);
-			T = nextT(T, p, parm, r);
+			result.add(t, r[i]);
 			t += dt;
+			i++;
 		}
 		return result;
 	}
@@ -258,27 +301,27 @@ public class HotEndModel
 	/**
 	 * Return the analytical solution at time t for constant power pTest
 	 * @param t
-	 * @param parm
+	 * @param hotEnd
 	 * @return
 	 */
-	public double odeSolution(double t, Parameters parm)
+	public double odeSolution(double t, double[] hotEnd)
 	{
-		if(t <= parm.lag) return T0;
-		return T0 + parm.a*pTest*range*( 1 - Math.exp(parm.b*(parm.lag - t)) )/parm.b;
+		if(t <= hotEnd[lag]) return T0;
+		return T0 + hotEnd[a]*pTest*range*( 1 - Math.exp(hotEnd[b]*(hotEnd[lag] - t)) )/hotEnd[b];
 	}
 	
 	/**
 	 * Plot curve for the analytical solution at constant power pTest
-	 * @param parm
+	 * @param hotEnd
 	 * @return
 	 */
-	public XYSeries analyticalSolution(Parameters parm)
+	public XYSeries analyticalSolution(double[] hotEnd)
 	{
 		XYSeries result = new XYSeries( "Theory");
 		double t = 0;
 		while(t < endTime)
 		{
-			result.add(t, odeSolution(t, parm));
+			result.add(t, odeSolution(t, hotEnd));
 			t += dt;
 		}
 		return result;
@@ -287,17 +330,17 @@ public class HotEndModel
 	/**
 	 * Compute the residual sum of squares between the analytical solution for
 	 * parm and the experiment.
-	 * @param parm
+	 * @param hotEnd
 	 * @return
 	 */
-	public double rss(Parameters parm)
+	public double heRSS(double[] hotEnd)
 	{
 		double r = 0;
 		double t = 0;
 		int i = 0;
 		while(t < endTime)
 		{
-			double d = odeSolution(t, parm) - experiment[i];
+			double d = odeSolution(t, hotEnd) - experiment[i];
 			r += d*d;
 			t += dt;
 			i++;
@@ -306,103 +349,136 @@ public class HotEndModel
 	}
 	
 	/**
-	 * Compute the partial derivative of the RSS w.r.t. parm.a
-	 * @param r
-	 * @param parm
+	 * Compute the residual sum of squares between the PID 
+	 * and the ideal.
+	 * @param pid
 	 * @return
 	 */
-	public double drByDa(double r, Parameters parm)
+	public double pidRSS(double[] pid, double[] hotEnd)
 	{
-		double delta = Math.abs(parm.a*gradEst);
-		Parameters temp = new Parameters(parm.a + delta, parm.b, parm.lag);
-		double newR = rss(temp);
+		double v[] = pidPredict(pid, hotEnd);
+		double r = 0;
+		double t = 0;
+		int i = 0;
+		while(t < endTime)
+		{
+			double d = v[i] - ideal[i];
+			r += d*d;
+			t += dt;
+			i++;
+		}
+		return r;
+	}
+	
+	/**
+	 * Compute the partial derivative of the experiment RSS w.r.t. parm[i]
+	 * @param r
+	 * @param hotEnd
+	 * @param i
+	 * @return
+	 */
+	public double heDrByDp(double r, double[] hotEnd, int i)
+	{
+		double delta = Math.abs(hotEnd[i]*gradEst);
+		double[] temp = new double[hotEnd.length];
+		for(int j = 0; j < hotEnd.length; j++) temp[j] = hotEnd[j];
+		temp[i] = hotEnd[i] + delta;
+		double newR = heRSS(temp);
 		return (newR - r)/delta;
 	}
 	
 	/**
-	 * Compute the partial derivative of the RSS w.r.t. parm.b
+	 * Compute the partial derivative of the PID RSS w.r.t. parm[i]
 	 * @param r
-	 * @param parm
+	 * @param pid
+	 * @param i
 	 * @return
 	 */
-	public double drByDb(double r, Parameters parm)
+	public double pidDrByDp(double r, double[] pid, double[] hotEnd, int i)
 	{
-		double delta = Math.abs(parm.b*gradEst);
-		Parameters temp = new Parameters(parm.a, parm.b + delta, parm.lag);
-		double newR = rss(temp);
+		double delta = Math.abs(pid[i]*gradEst);
+		double[] temp = new double[pid.length];
+		for(int j = 0; j < pid.length; j++) temp[j] = pid[j];
+		temp[i] = pid[i] + delta;
+		double newR = pidRSS(temp, hotEnd);
 		return (newR - r)/delta;
 	}
-	
-	/**
-	 * Compute the partial derivative of the RSS w.r.t. parm.lag
-	 * @param r
-	 * @param parm
-	 * @return
-	 */
-	public double drByDlag(double r, Parameters parm)
-	{
-		double delta = Math.abs(parm.lag*gradEst);
-		Parameters temp = new Parameters(parm.a, parm.b, parm.lag + delta);
-		double newR = rss(temp);
-		return (newR - r)/delta;
-	}
+
 	
 	/**
 	 * Dumb descend-the-slope optimiser to fit the parameters to the
 	 * experiment.
 	 * @return
 	 */
-	public Parameters fit()
+	public double[] heFit()
 	{
-		Parameters pr = new Parameters();
-		double r = rss(pr);
+		double[] hotEnd = {aDefault, bDefault, lagDefault};
+		double r = heRSS(hotEnd);
+		double[] newHotEnd;
 		double newR;
-		Parameters newPr;
 		int count = 0;
 		double g;
 		while(count < 200 && Math.sqrt(r)*dt/endTime > 0.1)
 		{
-			g = drByDa(r, pr);
-			if(g > 0)
-				newPr = new Parameters(pr.a - Math.abs(pr.a*gradEst), pr.b, pr.lag);
-			else
-				newPr = new Parameters(pr.a + Math.abs(pr.a*gradEst), pr.b, pr.lag);
-			newR = rss(newPr);
-			if(newR < r)
+			for(int i = 0; i < hotEnd.length; i++)
 			{
-				r = newR;
-				pr = newPr;
+				g = heDrByDp(r, hotEnd, i);
+				newHotEnd = new double[hotEnd.length];
+				for(int j = 0; j < hotEnd.length; j++) newHotEnd[j] = hotEnd[j];
+				if(g > 0)
+					newHotEnd[i] = hotEnd[i] - Math.abs(hotEnd[i]*gradEst);
+				else
+					newHotEnd[i] = hotEnd[i] + Math.abs(hotEnd[i]*gradEst);
+				newR = heRSS(newHotEnd);
+				if(newR < r)
+				{
+					r = newR;
+					hotEnd = newHotEnd;
+				}
 			}
-			
-			g = drByDb(r, pr);
-			if(g > 0)
-				newPr = new Parameters(pr.a, pr.b - Math.abs(pr.b*gradEst), pr.lag);
-			else
-				newPr = new Parameters(pr.a, pr.b + Math.abs(pr.b*gradEst), pr.lag);
-			newR = rss(newPr);
-			if(newR < r)
-			{
-				r = newR;
-				pr = newPr;
-			}
-			
-			g = drByDlag(r, pr);
-			if(g > 0)
-				newPr = new Parameters(pr.a, pr.b, pr.lag - Math.abs(pr.lag*gradEst));
-			else
-				newPr = new Parameters(pr.a, pr.b, pr.lag + Math.abs(pr.lag*gradEst));
-			newR = rss(newPr);
-			if(newR < r)
-			{
-				r = newR;
-				pr = newPr;
-			}
-			
 			count++;
 		}
-		System.out.println("RMS error: " + Math.sqrt(r)*dt/endTime + ", iterations: " + count);
-		System.out.println("Parameters: " + pr);
-		return pr;
+		System.out.println(" Hot end RMS error: " + Math.sqrt(r)*dt/endTime + ", iterations: " + count);
+		System.out.println(" Hot end parameters: a = " + hotEnd[a] + ", b = " + hotEnd[b] + ", lag = " + hotEnd[lag]);
+		return hotEnd;
+	}
+	
+	/**
+	 * Dumb descend-the-slope optimiser to fit the pid to the
+	 * ideal.
+	 * @return
+	 */
+	public double[] pidFit(double[] hotEnd)
+	{
+		double[] pid = { KpDefault, KiDefault, KdDefault, clampDefault };
+		double r = pidRSS(pid, hotEnd);
+		double[] newPid;
+		double newR;
+		int count = 0;
+		double g;
+		while(count < 200 && Math.sqrt(r)*dt/endTime > 0.1)
+		{
+			for(int i = 0; i < pid.length; i++)
+			{
+				g = pidDrByDp(r, pid,  hotEnd, i);
+				newPid = new double[pid.length];
+				for(int j = 0; j < pid.length; j++) newPid[j] = pid[j];
+				if(g > 0)
+					newPid[i] = pid[i] - Math.abs(pid[i]*gradEst);
+				else
+					newPid[i] = pid[i] + Math.abs(pid[i]*gradEst);
+				newR = pidRSS(newPid, hotEnd);
+				if(newR < r)
+				{
+					r = newR;
+					pid = newPid;
+				}
+			}
+			count++;
+		}
+		System.out.println(" PID RMS error: " + Math.sqrt(r)*dt/endTime + ", iterations: " + count);
+		System.out.println(" PID parameters: Kp = " + pid[Kp] + ", Ki = " + pid[Ki] + ", Kd = " + pid[Kd]  + ", clamp = " + pid[clamp]);
+		return pid;
 	}
 	
 	/**
@@ -423,16 +499,37 @@ public class HotEndModel
 		return result;
 	}
 	
+	/**
+	 * Plot curve for the ideal profile
+	 * @return
+	 */
+	public XYSeries idealProfile()
+	{
+		XYSeries result = new XYSeries( "Ideal");
+		double t = 0;
+		int i = 0;
+		while(t < endTime)
+		{
+			result.add(t, ideal[i]);
+			t += dt;
+			i++;
+		}
+		return result;
+	}
+	
 	public static void main(String[] args) 
 	{
 		HotEndModel hem = new HotEndModel();
-		Parameters pr = hem.fit();
-		XYSeries pid = hem.PIDPower(pr);
-		XYSeries analytical = hem.analyticalSolution(pr);
+		double[] hotEnd = hem.heFit();
+		hem.setIdeal();
+		double[] pid = { hem.KpDefault, hem.KiDefault, hem.KdDefault, hem.clampDefault };
+		XYSeries pd = hem.PIDPower(pid, hotEnd);
+		XYSeries analytical = hem.analyticalSolution(hotEnd);
 		XYSeries expt = hem.experimentalObservations();
+		XYSeries idl = hem.idealProfile();
 		try 
 		{
-			hem.buildChart(expt, analytical, pid);
+			hem.buildChart(expt, analytical, idl, pd);
 		} catch (Exception e) 
 		{
 			e.printStackTrace();
