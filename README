@@ -33,6 +33,11 @@ then iterates to find the values of a, b and tLag that minimise that RSS.  The i
 computes numerical values for the partial derivatives of the RSS with respect to a, b and tLag
 then uses a downhill pathfinder to get to a minimum RSS.
 
+The file t04 in here is a samle set of experimental hot end results with the PWM set to 0.4*range
+(where range is normally 255) run for four miniutes writing temperatures every 0.4 seconds.  You
+should obviously provide the equivalent data for your hot end.
+
+
 author Adrian Bowyer
 RepRapPro Ltd
 http://reprappro.com
