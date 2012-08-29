@@ -522,7 +522,8 @@ public class HotEndModel
 		HotEndModel hem = new HotEndModel();
 		double[] hotEnd = hem.heFit();
 		hem.setIdeal();
-		double[] pid = { hem.KpDefault, hem.KiDefault, hem.KdDefault, hem.clampDefault };
+		//double[] pid = { hem.KpDefault, hem.KiDefault, hem.KdDefault, hem.clampDefault };
+		double[] pid = hem.pidFit(hotEnd);
 		XYSeries pd = hem.PIDPower(pid, hotEnd);
 		XYSeries analytical = hem.analyticalSolution(hotEnd);
 		XYSeries expt = hem.experimentalObservations();
