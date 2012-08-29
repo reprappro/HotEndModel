@@ -1,6 +1,103 @@
+RepRapPro Ltd Hot End Modelling Program
+
+Adrian Bowyer
+29 August 2012
+
 This is a simple Java program to model the behaviour of a RepRap hot end (or 
 anything else that gets heated) to allow the parameters of a PID for controlling
-it to be set.
+it to be set automatically off-line.
+
+To run this program from the command line, move to the directory in which
+it is installed and type:
+
+$ java -jar exe/hot-end-model.jar
+
+The variables in the window that pops up have sensible defaults in them.
+The variables are:
+
+time increment (s)
+  The number of seconds between experimental temperature readings
+
+end time (s)
+  How long your experiment ran
+
+test power [0, 1]
+  The fraction of full power that your experiment used
+
+D->A range
+  The maximum value that your D to A converter powering the heating
+  uses.
+
+ODE a value
+  The power-in coefficient in the ordinary differential equation (see below).
+
+ODE b value
+  The heat-loss coefficient in the ordinary differential equation (see below).
+
+ODE lag value (s)
+  The time after heat is applied that it takes to have an effect.
+
+target temperature (C)
+  The temperature that you want the PID to hit accurately quickly and stably.
+
+heating time (s)
+  How long the PID can take to heat to that temperature.
+
+PID Kp
+  The PID proportional coefficient.
+
+PID Ki
+  The PID integral coefficient.
+
+PID Kd
+  The PID differential coefficient.
+
+PID integral clamp
+  The PID integral is not allowed to get bigger than this, or smaller
+  than minus this.
+
+Experiment file name
+  The file with your experimental temperatures in.
+
+ODE RMS error
+  Output: the mean residual sum of squares after the ODE parameters have been fitted.
+
+PID RMS error
+  Output: the mean residual sum of squares after the PID parameters have been fitted.
+
+The program runs in a loop till you hit Exit.  Each time round it will report the
+PID parameters it has computed in the boxes listed above (and also the ODE parameters).  
+The PID parameters are probably the ones you are interested in - it is those that you 
+need to copy into your temperature controlling firmware.
+
+The PID looks like this in Java terms (easy to convert to C in firmware):
+
+	public double PID(double T, double[] pid) 
+	{
+		eLast = e;      // Old error: global variable
+		e = target - T; // Error now: global variable
+
+		double result = pid[Kp] * e + pid[Ki] * eIntegral + pid[Kd]
+				* (e - eLast) / dt; // dt is the time between calls: global variable
+
+		eIntegral += e * dt; // Error integral: global variable
+
+		if (eIntegral < -pid[clamp]) eIntegral = -pid[clamp];
+		if (eIntegral > pid[clamp]) eIntegral = pid[clamp];
+		if (result < 0) result = 0;
+		if (result > 1)	result = 1;
+		return result;
+	}
+
+T is the temperature now, and pid is a 4-element array with the PID parameters in got
+from this program.  The value returned is in the range [0,1].  It should be multiplied 
+by the D->A range value to get the number to send to the heater.
+
+The file t04 in here is a samle set of experimental hot end results with the PWM set to 0.4*range
+(where range is normally 255) run for four miniutes writing temperatures to the file every 0.4 
+seconds.  You should obviously provide the equivalent data for your hot end.
+
+-------------------------------------------------------------------------------
 
 The Hot End is modelled as follows:
 
@@ -26,16 +123,23 @@ So the procedure is to fix a value of p, run the hot end up from
 cold using it, and record the temperatures every dt seconds into
 a data file.
 
-This program then reads that data file (the first temperature in which is taken to be T0)
-and compares it with Equation (2).  Arbitrary, but sensible, values of a, b and tLag are set
-for the initial comparison.  The program works out a residual sum of squares for the errors, 
-then iterates to find the values of a, b and tLag that minimise that RSS.  The iteration 
-computes numerical values for the partial derivatives of the RSS with respect to a, b and tLag
-then uses a downhill pathfinder to get to a minimum RSS.
+Referring to the graph sample-output.png, you run a simple experiment setting
+the PWM into the heater constant (around 0.4*255-ish) and logging the
+results every 0.4s (or whatever).  This gives the red curve.
 
-The file t04 in here is a samle set of experimental hot end results with the PWM set to 0.4*range
-(where range is normally 255) run for four miniutes writing temperatures every 0.4 seconds.  You
-should obviously provide the equivalent data for your hot end.
+The program then does an iterative least-squares fit (the blue curve)
+of the analytical solution of the differential equation that describes
+the hot end to the experimental results.  This gives all the hot end
+parameters (response to input power, cooling, and time lag) automatically.
+
+You then specify your ideal heating characteristic (the yellow curve).
+
+The program then takes the hot end parameters it found plus the PID
+controller terms and does another least-squares fit, this time keeping
+the found hot-end parameters constant and optimising the PID
+parameters to get the response as close as possible to the yellow
+curve - the black curve.
+
 
 
 author Adrian Bowyer
