@@ -119,10 +119,6 @@ p is changed to a PWM value in [0, range] internally.
 
 Generally, the unknown values are a, b and tLag.
 
-So the procedure is to fix a value of p, run the hot end up from
-cold using it, and record the temperatures every dt seconds into
-a data file.
-
 Referring to the graph sample-output.png, you run a simple experiment setting
 the PWM into the heater constant (around 0.4*255-ish) and logging the
 results every 0.4s (or whatever).  This gives the red curve.
@@ -139,6 +135,10 @@ controller terms and does another least-squares fit, this time keeping
 the found hot-end parameters constant and optimising the PID
 parameters to get the response as close as possible to the yellow
 curve - the black curve.
+
+The graph on the right in sample-output.png is the hot end running with
+the computer PID parameters installed in the firmware.  As you can see it
+reproduces the black curve on the left well.
 
 
 
