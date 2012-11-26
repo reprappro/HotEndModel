@@ -7,14 +7,15 @@ import java.io.BufferedReader;
 import java.io.FileReader;
 
 import javax.swing.BorderFactory;
-import javax.swing.ButtonGroup;
+//import javax.swing.ButtonGroup;
 import javax.swing.JButton;
-import javax.swing.JComponent;
+//import javax.swing.JComponent;
 import javax.swing.JDialog;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
-import javax.swing.JRadioButton;
+//import javax.swing.JRadioButton;
 import javax.swing.JTextField;
 import javax.swing.SwingConstants;
 
@@ -80,18 +81,21 @@ import org.jfree.data.xy.XYSeriesCollection;
  * 
  */
 
+
 /**
  * Class to put a selection panel up for the user to type numbers into
  */
 class UserInteraction extends JPanel 
 {
+	static String experimentalData = null; // The name of the file with the experimental data
+
 	private HotEndModel hem;
 	
-	private double dt = 0.4;      // Time increment for Euler integration and experiment
+	private double dt = 1.0;      // Time increment for Euler integration and experiment
 	private double endTime = 240; // How long to run the simulation (secs)
-	private double T0 = 25;       // Room temperature
-	private double gradEst = 0.01;// Used in numerical estimation of derivatives
-	private double pTest = 0.4;   // Power used in the experimental test
+	//private double T0 = 25;       // Room temperature
+	//private double gradEst = 0.01;// Used in numerical estimation of derivatives
+	private double pTest = 0.25;   // Power used in the experimental test
 	private double range = 255;   // Actual power values to multiply p by
 
 	// Hot end parameters
@@ -109,7 +113,7 @@ class UserInteraction extends JPanel
 	private double KdDefault = 0.02;  // Guessed PID parameter
 	private double clampDefault = 70; // Guessed PID parameter (The integral clamps to +/- this value)
 
-	private String experimentalData = "t04"; // The name of the file with the experimental data
+
 	
 	private final long serialVersionUID = 1L;
 	private JDialog dialog;
@@ -133,7 +137,7 @@ class UserInteraction extends JPanel
 	private JTextField KiDefaultBox;        // Guessed PID parameter
 	private JTextField KdDefaultBox;        // Guessed PID parameter
 	private JTextField clampDefaultBox;     // Guessed PID parameter (The integral clamps to +/- this value)
-	private JTextField experimentalDataBox; // File name
+	//private JTextField experimentalDataBox; // File name
 	private JPanel radioPanel;
 	
 	/**
@@ -172,7 +176,7 @@ class UserInteraction extends JPanel
 		KiDefault = KiDefaultp;
 		KdDefault = KdDefaultp;
 		clampDefault = clampDefaultp; 
-		experimentalData = experimentalDatap;
+		//experimentalData = experimentalDatap;
 	}
 	
 	/**
@@ -231,14 +235,14 @@ class UserInteraction extends JPanel
 		KdDefaultBox = setUp("PID Kd", KdDefault);
 		clampDefaultBox = setUp("PID integral clamp", clampDefault);
 		
-		JLabel jLabel2 = new JLabel();
-		radioPanel.add(jLabel2);
-		jLabel2.setText("Experiment file name");
-		jLabel2.setHorizontalAlignment(SwingConstants.LEFT);
-		experimentalDataBox = new JTextField(experimentalData);
-		experimentalDataBox.setSize(20, 10);
-		experimentalDataBox.setHorizontalAlignment(SwingConstants.RIGHT);
-		radioPanel.add(experimentalDataBox);
+//		JLabel jLabel2 = new JLabel();
+//		radioPanel.add(jLabel2);
+//		jLabel2.setText("Experiment file name");
+//		jLabel2.setHorizontalAlignment(SwingConstants.LEFT);
+//		experimentalDataBox = new JTextField(experimentalData);
+//		experimentalDataBox.setSize(20, 10);
+//		experimentalDataBox.setHorizontalAlignment(SwingConstants.RIGHT);
+//		radioPanel.add(experimentalDataBox);
 		
 		JLabel jLabel3 = new JLabel();
 		radioPanel.add(jLabel3);
@@ -249,7 +253,16 @@ class UserInteraction extends JPanel
 		radioPanel.add(jLabel4);
 		jLabel4.setText("PID RMS error: " + pidrss);
 		jLabel4.setHorizontalAlignment(SwingConstants.LEFT);
-
+		
+		if(experimentalData == null)
+		{
+			final JFileChooser fc = new JFileChooser();
+			fc.setDialogTitle("Experimental heating file");
+			fc.showOpenDialog(this);
+			experimentalData = fc.getSelectedFile().toString();
+		}
+		
+		
 		try
 		{
 
@@ -324,7 +337,7 @@ class UserInteraction extends JPanel
 		Double.parseDouble(KiDefaultBox.getText()),
 		Double.parseDouble(KdDefaultBox.getText()),
 		Double.parseDouble(clampDefaultBox.getText()), 
-		experimentalDataBox.getText()
+		experimentalData
 		);
 		dialog.dispose();
 	}
@@ -339,11 +352,12 @@ class UserInteraction extends JPanel
 
 public class HotEndModel {
 
-	private double dt = 0.4;      // Time increment for Euler integration and experiment
+	private double timePenalty = 100.0; // If this is 0, no penalty. Otherwise later errors weigh more than early ones
+	private double dt = 1.0;      // Time increment for Euler integration and experiment
 	private double endTime = 240; // How long to run the simulation (secs)
 	private double T0 = 25;       // Room temperature
 	private double gradEst = 0.01;// Used in numerical estimation of derivatives
-	private double pTest = 0.4;   // Power used in the experimental test
+	private double pTest = 0.25;   // Power used in the experimental test
 	private double range = 255;   // Actual power values to multiply p by
 
 	// Hot end parameters
@@ -511,9 +525,12 @@ public class HotEndModel {
 	public void setIdeal() {
 		double t = 0;
 		int i = 0;
-		while (t < endTime) {
-			if (t < heatingTime) {
-				ideal[i] = T0 + (target - T0) * t / heatingTime;
+		while (t < endTime) 
+		{
+			//if (t < heatingTime) 
+			if 	(t < lagDefault)
+			{
+				ideal[i] = T0; // + (target - T0) * t / heatingTime;
 			} else
 				ideal[i] = target;
 			i++;
@@ -700,7 +717,8 @@ public class HotEndModel {
 		double t = 0;
 		int i = 0;
 		while (t < endTime) {
-			double d = v[i] - ideal[i];
+			double d = Math.abs(v[i] - ideal[i]);
+			d += timePenalty*d*t/endTime;
 			r += d * d;
 			t += dt;
 			i++;
